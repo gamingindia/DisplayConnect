@@ -151,11 +151,11 @@ class OverpassStreetProvider(
      * Extracts LineString features from the "transportation" layer and converts local tile
      * cursor coordinates into WGS84 LatLon StreetWay polylines.
      */
-    private object MvtRoadDecoder {
+private object MvtRoadDecoder {
 
         fun decodeTransportationWays(pbf: ByteArray, zoom: Int, tileX: Int, tileY: Int): List<StreetWay> {
             val reader = ProtoReader(pbf, 0, pbf.size)
-            val result = ArrayList<StreetWay>(128)
+            val result = ArrayList<StreetWay>(256)
             var syntheticIdBase = ((zoom.toLong() and 0x1FL) shl 48) or
                 ((tileX.toLong() and 0xFFFFFFL) shl 24) or
                 (tileY.toLong() and 0xFFFFFFL)
@@ -268,15 +268,15 @@ class OverpassStreetProvider(
             if (geomType != 2 || geomStart < 0) return
 
             val gr = ProtoReader(buf, geomStart, geomEnd)
-            var cx = 0
-            var cy = 0
+            var cx = 0L
+            var cy = 0L
             var lineIndex = 0
             var currentLine = ArrayList<LatLon>(16)
 
             while (!gr.eof()) {
-                val cmdInt = gr.readVarint().toInt()
-                val cmd = cmdInt and 0x7
-                val count = cmdInt ushr 3
+                val cmdInt = gr.readVarint()
+                val cmd = (cmdInt and 0x7L).toInt()
+                val count = (cmdInt ushr 3).toInt()
                 when (cmd) {
                     1 -> { // MoveTo
                         for (i in 0 until count) {
@@ -284,16 +284,16 @@ class OverpassStreetProvider(
                                 out.add(StreetWay((featureId shl 4) + lineIndex++, currentLine))
                             }
                             currentLine = ArrayList(16)
-                            cx += decodeZigZag(gr.readVarint().toInt())
-                            cy += decodeZigZag(gr.readVarint().toInt())
-                            currentLine.add(tilePixelToLatLon(cx, cy, extent, zoom, tileX, tileY))
+                            cx += decodeZigZag(gr.readVarint())
+                            cy += decodeZigZag(gr.readVarint())
+                            currentLine.add(tilePixelToLatLon(cx.toDouble(), cy.toDouble(), extent, zoom, tileX, tileY))
                         }
                     }
                     2 -> { // LineTo
                         for (i in 0 until count) {
-                            cx += decodeZigZag(gr.readVarint().toInt())
-                            cy += decodeZigZag(gr.readVarint().toInt())
-                            currentLine.add(tilePixelToLatLon(cx, cy, extent, zoom, tileX, tileY))
+                            cx += decodeZigZag(gr.readVarint())
+                            cy += decodeZigZag(gr.readVarint())
+                            currentLine.add(tilePixelToLatLon(cx.toDouble(), cy.toDouble(), extent, zoom, tileX, tileY))
                         }
                     }
                     7 -> { // ClosePath
@@ -311,23 +311,23 @@ class OverpassStreetProvider(
         }
 
         private fun tilePixelToLatLon(
-            px: Int,
-            py: Int,
+            px: Double,
+            py: Double,
             extent: Int,
             zoom: Int,
             tileX: Int,
             tileY: Int
         ): LatLon {
             val n = (1 shl zoom).toDouble()
-            val normX = tileX + (px.toDouble() / extent.toDouble())
-            val normY = tileY + (py.toDouble() / extent.toDouble())
+            val normX = tileX + (px / extent.toDouble())
+            val normY = tileY + (py / extent.toDouble())
             val lon = (normX / n) * 360.0 - 180.0
             val latRad = atan(sinh(PI * (1.0 - 2.0 * normY / n)))
             val lat = Math.toDegrees(latRad)
             return LatLon(lat, lon)
         }
 
-        private fun decodeZigZag(n: Int): Int = (n ushr 1) xor -(n and 1)
+        private fun decodeZigZag(n: Long): Long = (n ushr 1) xor -(n and 1L)
 
         private class ProtoReader(
             private val buf: ByteArray,
@@ -360,4 +360,3 @@ class OverpassStreetProvider(
             }
         }
     }
-}
