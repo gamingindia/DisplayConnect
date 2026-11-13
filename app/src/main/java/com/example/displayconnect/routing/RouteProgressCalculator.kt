@@ -8,7 +8,9 @@ data class TripProgress(
     val offRoute: Boolean = false,
     val matchedPosition: LatLon? = null,
     val distanceFromRouteM: Double? = null,
-    val routeBearing: Float? = null
+    val routeBearing: Float? = null,
+    /** Index i of the route segment (points[i] -> points[i+1]) the rider is currently on. */
+    val segmentIndex: Int? = null
 )
 
 /** Projects GPS onto the route; remaining distance follows its bends, not a straight line. */
@@ -60,7 +62,8 @@ class RouteProgressCalculator(private val route: RouteData) {
         return TripProgress(
             ceil(remainingM).toInt().coerceAtLeast(0),
             if (route.durationS > 0) ceil(remainingS).toInt().coerceAtLeast(0) else null,
-            matchedPosition = matched, distanceFromRouteM = found.distance, routeBearing = direction
+            matchedPosition = matched, distanceFromRouteM = found.distance, routeBearing = direction,
+            segmentIndex = i
         )
     }
 
