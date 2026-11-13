@@ -7,17 +7,24 @@ import java.util.zip.GZIPOutputStream
 
 /** App-private persistent files; a tile is only published after its complete payload is written. */
 class OfflineDiskStore(private val root: File) {
+    private companion object {
+        /** Bump whenever the meaning of stored tiles changes. v1 tiles came from the broken MVT decoder (all empty). */
+        const val FORMAT_VERSION = 2
+    }
+
     private val memory = LinkedHashMap<StreetTile, List<StreetWay>>(32, 0.75f, true)
     init { check(root.isDirectory || root.mkdirs()) { "Não foi possível criar o mapa offline" } }
 
     @Synchronized fun load(tile: StreetTile): List<StreetWay>? {
-        memory[tile]?.takeIf { it.isNotEmpty() }?.let { return it }
+        memory[tile]?.let { return it }
+        // A tile that was downloaded successfully but has no roads is a valid (empty) tile. Tiles written by
+        // the old, broken decoder are rejected by the FORMAT_VERSION check in read(), so they are re-downloaded.
         val result = read(File(root, tile.key + ".gz")) { input ->
             List(input.count(50000)) {
                 val id = input.readLong()
                 StreetWay(id, input.points())
             }
-        }?.takeIf { it.isNotEmpty() } ?: return null
+        } ?: return null
         remember(tile, result)
         return result
     }
@@ -80,7 +87,7 @@ class OfflineDiskStore(private val root: File) {
         val backup = File(file.path + ".bak")
         val source = if (file.exists()) file else backup
         if (!source.exists()) null else DataInputStream(GZIPInputStream(BufferedInputStream(FileInputStream(source)))).use {
-            require(it.readInt() == 1)
+            require(it.readInt() == FORMAT_VERSION)
             val value = block(it)
             require(it.read() == -1) // Verify the gzip trailer, detecting truncated/partial downloads.
             value
@@ -92,7 +99,7 @@ class OfflineDiskStore(private val root: File) {
         val backup = File(file.path + ".bak")
         try {
             DataOutputStream(GZIPOutputStream(BufferedOutputStream(FileOutputStream(temp)))).use {
-                it.writeInt(1); block(it)
+                it.writeInt(FORMAT_VERSION); block(it)
             }
             if (file.exists()) { check(!backup.exists() || backup.delete()); check(file.renameTo(backup)) }
             if (!temp.renameTo(file)) { backup.renameTo(file); error("Não foi possível salvar o mapa") }
