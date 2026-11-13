@@ -82,7 +82,6 @@ class NavigationEngine(
                 val originUpdate = withTimeout(45_000) { locationTracker.locationFlow(intervalMs).first { acceptUpdate(it) } }
                 val origin = LatLon(originUpdate.lat, originUpdate.lon)
                 val dest = destination ?: return@launch
-                // Reopening the same trip near its route works without another routing request.
                 val saved = offlineMap.findRoute(origin, dest, settings.routeProfile)
                 val selected = saved ?: routeProvider.fetchRoute(origin, dest, settings.routeProfile).getOrElse {
                     error("Não foi possível calcular a rota. Confira a internet e o destino.")
@@ -220,16 +219,15 @@ class NavigationEngine(
             computeBearingFromRoute(update, simplified)
         }
 
-        // Convert Doppler GPS speed from m/s to km/h
         val speedKmh = if (raw.speedMps.isFinite() && raw.speedMps >= 0f) {
             (raw.speedMps * 3.6f).toInt()
         } else {
             0
         }
 
-        // Format clock arrival time (HH:mm)
-        val etaString = if (progress.remainingDurationS > 0) {
-            val etaMillis = System.currentTimeMillis() + (progress.remainingDurationS * 1000L)
+        val remSec = progress.remainingDurationS ?: 0
+        val etaString = if (remSec > 0) {
+            val etaMillis = System.currentTimeMillis() + (remSec * 1000L)
             SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(etaMillis))
         } else {
             ""
