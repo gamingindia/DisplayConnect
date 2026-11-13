@@ -9,8 +9,6 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
@@ -151,7 +149,7 @@ class OverpassStreetProvider(
      * Extracts LineString features from the "transportation" layer and converts local tile
      * cursor coordinates into WGS84 LatLon StreetWay polylines.
      */
-private object MvtRoadDecoder {
+    private object MvtRoadDecoder {
 
         fun decodeTransportationWays(pbf: ByteArray, zoom: Int, tileX: Int, tileY: Int): List<StreetWay> {
             val reader = ProtoReader(pbf, 0, pbf.size)
@@ -360,3 +358,4 @@ private object MvtRoadDecoder {
             }
         }
     }
+}
