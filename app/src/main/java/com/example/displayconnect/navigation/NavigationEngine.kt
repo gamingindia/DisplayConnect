@@ -237,12 +237,41 @@ class NavigationEngine(
         val simplified = MapProjector.simplifyRoute(
             currentRoute.coordinates.map { it.lat to it.lon }
         )
+
+        // Split the route at the rider: "ahead" is drawn blue, "past" grey (like Google Maps).
+        val coords = currentRoute.coordinates
+        val seg = progress.segmentIndex
+        val matched = progress.matchedPosition
+        val aheadPoints: List<Pair<Double, Double>>
+        val pastPoints: List<Pair<Double, Double>>
+        if (seg != null && matched != null && seg in 0 until coords.lastIndex) {
+            val ahead = ArrayList<Pair<Double, Double>>(minOf(coords.size - seg, AHEAD_WINDOW + 1))
+            ahead.add(matched.lat to matched.lon)
+            for (k in (seg + 1)..minOf(coords.lastIndex, seg + AHEAD_WINDOW)) ahead.add(coords[k].lat to coords[k].lon)
+            // Ordered from the rider backwards so the point budget keeps the part nearest to the rider.
+            val past = ArrayList<Pair<Double, Double>>(minOf(seg + 2, PAST_WINDOW + 2))
+            past.add(matched.lat to matched.lon)
+            for (k in seg downTo maxOf(0, seg - PAST_WINDOW)) past.add(coords[k].lat to coords[k].lon)
+            aheadPoints = ahead
+            pastPoints = past
+        } else {
+            aheadPoints = coords.map { it.lat to it.lon }
+            pastPoints = emptyList()
+        }
         val screenRoute = MapProjector.projectRoute(
             centerLat = update.lat,
             centerLon = update.lon,
-            routePoints = currentRoute.coordinates.map { it.lat to it.lon },
-            scaleMeters = effectiveScaleMeters
+            routePoints = aheadPoints,
+            scaleMeters = effectiveScaleMeters,
+            maxPoints = 64
         )
+        val screenPast = if (pastPoints.size >= 2) MapProjector.projectRoute(
+            centerLat = update.lat,
+            centerLon = update.lon,
+            routePoints = pastPoints,
+            scaleMeters = effectiveScaleMeters,
+            maxPoints = 48
+        ) else emptyList()
         val userPoint = MapProjector.projectPoint(
             centerLat = update.lat,
             centerLon = update.lon,
@@ -294,6 +323,7 @@ class NavigationEngine(
             offRoute = progress.offRoute,
             street = step?.street ?: "",
             routeScreenPoints = screenRoute,
+            pastScreenPoints = screenPast,
             streetSegments = streetSegments,
             userScreenPoint = userPoint,
             html = MapsHtmlHolder.get()
@@ -313,6 +343,11 @@ class NavigationEngine(
                 statsTracker.currentStats(settings.resolutionLabel)
             )
         }
+    }
+
+    private companion object {
+        const val AHEAD_WINDOW = 4000
+        const val PAST_WINDOW = 800
     }
 
     private fun findCurrentStep(update: LocationUpdate, steps: List<RouteStep>): RouteStep? {
