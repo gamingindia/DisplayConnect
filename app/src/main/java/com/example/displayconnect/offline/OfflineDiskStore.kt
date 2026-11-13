@@ -10,14 +10,14 @@ class OfflineDiskStore(private val root: File) {
     private val memory = LinkedHashMap<StreetTile, List<StreetWay>>(32, 0.75f, true)
     init { check(root.isDirectory || root.mkdirs()) { "Não foi possível criar o mapa offline" } }
 
-    @Synchronized fun load(tile: StreetTile): List<StreetWay>? {
-        memory[tile]?.let { return it }
+@Synchronized fun load(tile: StreetTile): List<StreetWay>? {
+        memory[tile]?.takeIf { it.isNotEmpty() }?.let { return it }
         val result = read(File(root, tile.key + ".gz")) { input ->
             List(input.count(50000)) {
                 val id = input.readLong()
                 StreetWay(id, input.points())
             }
-        } ?: return null
+        }?.takeIf { it.isNotEmpty() } ?: return null
         remember(tile, result)
         return result
     }
