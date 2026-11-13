@@ -232,8 +232,13 @@ class NavigationEngine(
         } else {
             ""
         }
+        val nowDate = Date()
+        val currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(nowDate)
+        val currentDate = SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(nowDate)
 
         val message = NavMessage(
+            timeStr = currentTime,
+            dateStr = currentDate,
             lat = update.lat,
             lon = update.lon,
             bearing = bearing,
