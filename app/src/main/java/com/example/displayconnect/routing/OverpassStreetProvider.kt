@@ -1,5 +1,6 @@
 package com.example.displayconnect.routing
 
+import android.util.Log
 import com.example.displayconnect.offline.GeoBounds
 import com.example.displayconnect.offline.StreetSource
 import com.example.displayconnect.offline.StreetWay
@@ -74,6 +75,7 @@ class OverpassStreetProvider(
             }
         }
 
+        Log.d("DisplayConnectMap", "OpenFreeMap tiles=${tileCoords.size} decodedWays=${waysById.size}")
         waysById.values.toList()
     }
 
