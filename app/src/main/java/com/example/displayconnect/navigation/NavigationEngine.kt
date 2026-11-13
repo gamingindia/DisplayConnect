@@ -227,11 +227,11 @@ class NavigationEngine(
             0
         }
 
-        // Dynamic auto-zoom scale: projects full 240x232 viewport with zero blank margins
-        val effectiveScaleMeters = when {
-            distanceM in 1..100 -> 180
-            speedKmh > 55 -> 650
-            speedKmh > 35 -> 450
+        // Dynamic auto-zoom scale (Double): projects full 240x232 viewport with zero blank margins
+        val effectiveScaleMeters: Double = when {
+            distanceM in 1..100 -> 180.0
+            speedKmh > 55 -> 650.0
+            speedKmh > 35 -> 450.0
             else -> settings.mapScaleMeters
         }
 
