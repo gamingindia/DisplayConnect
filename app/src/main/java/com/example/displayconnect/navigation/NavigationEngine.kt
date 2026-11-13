@@ -52,7 +52,6 @@ class NavigationEngine(
     @Volatile private var progressCalculator: RouteProgressCalculator? = null
     private var destination: LatLon? = null
     private var locationJob: Job? = null
-    @Volatile private var smoothedScaleMeters = 0.0
     private var downloadJob: Job? = null
     private var activeSettings: AppSettings? = null
     private var gpsFilter: GpsFilter? = null
@@ -133,9 +132,8 @@ class NavigationEngine(
         if (downloadJob?.isActive == true) return
         val currentRoute = route ?: return
         val settings = activeSettings ?: return
-        val maxDownloadScale = maxOf(settings.mapScaleMeters, 500.0)
         downloadJob = scope.launch {
-            offlineMap.prepare(currentRoute, maxDownloadScale) { progress ->
+            offlineMap.prepare(currentRoute, settings.mapScaleMeters) { progress ->
                 withContext(Dispatchers.Main) { TransmissionHub.updateOfflineMap(progress) }
             }
         }
@@ -151,7 +149,6 @@ class NavigationEngine(
         gpsFilter = null
         lastMessage = null
         lastAcceptedMs = 0
-        smoothedScaleMeters = 0.0
         isRerouting = false
         lastRerouteMs = 0L
         route = null
@@ -229,20 +226,8 @@ class NavigationEngine(
             0
         }
 
-        // Smooth speed-adaptive scale with hysteresis (prevents zoom snaps & distortion above 30 km/h)
-        val baseScale = settings.mapScaleMeters
-        val targetScaleMeters: Double = when {
-            distanceM in 1..100 -> 180.0
-            speedKmh > 60 -> (baseScale * 2.0).coerceAtMost(500.0)
-            speedKmh > 40 -> (baseScale * 1.45).coerceAtMost(380.0)
-            else -> baseScale
-        }
-        smoothedScaleMeters = if (smoothedScaleMeters <= 0.0) {
-            targetScaleMeters
-        } else {
-            smoothedScaleMeters + (targetScaleMeters - smoothedScaleMeters) * 0.25
-        }
-        val effectiveScaleMeters = smoothedScaleMeters
+        // Fixed scale: keeps map scale constant regardless of speed or turn distance
+        val effectiveScaleMeters: Double = settings.mapScaleMeters
 
         val simplified = MapProjector.simplifyRoute(
             currentRoute.coordinates.map { it.lat to it.lon }
