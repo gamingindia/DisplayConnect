@@ -53,7 +53,7 @@ class OfflineMapRepository(
             }
         }
 
-    private suspend fun fetchWithRetry(boundsList: List<LatLonBounds>): List<StreetWay> {
+    private suspend fun fetchWithRetry(boundsList: List<GeoBounds>): List<StreetWay> {
         var lastError: Exception? = null
         for (attempt in 1..3) {
             currentCoroutineContext().ensureActive()
@@ -64,7 +64,6 @@ class OfflineMapRepository(
             } catch (e: Exception) {
                 lastError = e
                 if (attempt < 3) {
-                    // Exponential backoff (2.5s, then 5.0s) to let Overpass rate-limit window clear
                     delay(2500L * attempt)
                 }
             }
