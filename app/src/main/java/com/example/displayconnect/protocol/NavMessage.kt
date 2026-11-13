@@ -7,6 +7,8 @@ import org.json.JSONObject
  * JSON navigation message sent to the ESP32 (protocol v2).
  */
 data class NavMessage(
+    val speedKmh: Int = 0,
+    val eta: String = "",
     val lat: Double,
     val lon: Double,
     val bearing: Float,
@@ -30,6 +32,7 @@ data class NavMessage(
         }
         val json = JSONObject()
             .put("type", "nav")
+            .put("spd", speedKmh)
             .put("lat", lat)
             .put("lon", lon)
             .put("bearing", bearing.toDouble())
@@ -42,6 +45,9 @@ data class NavMessage(
             .put("gps_weak", gpsWeak)
             .put("street", java.text.Normalizer.normalize(street, java.text.Normalizer.Form.NFC).take(47))
             .put("route", route)
+        if (eta.isNotEmpty()) {
+            json.put("eta", eta)
+        }
         if (streetSegments.isNotEmpty()) {
             val streets = JSONArray()
             streetSegments.forEach { seg ->
