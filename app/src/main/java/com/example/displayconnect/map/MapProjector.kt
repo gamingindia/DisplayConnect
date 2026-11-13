@@ -17,7 +17,8 @@ object MapProjector {
         centerLat: Double,
         centerLon: Double,
         routePoints: List<Pair<Double, Double>>,
-        scaleMeters: Double
+        scaleMeters: Double,
+        maxPoints: Int = 64
     ): List<Pair<Int, Int>> {
         val runs = ScreenGeometry.visibleRuns(routePoints.map { (lat, lon) ->
             projectUnclipped(centerLat, centerLon, lat, lon, scaleMeters)
@@ -25,7 +26,7 @@ object MapProjector {
         val result = mutableListOf<Pair<Int, Int>>()
         for (run in runs) {
             val simplified = ScreenGeometry.simplify(run)
-            val remaining = 64 - result.size - if (result.isEmpty()) 0 else 1
+            val remaining = maxPoints - result.size - if (result.isEmpty()) 0 else 1
             if (remaining < 2) break
             if (result.isNotEmpty()) result.add(-1 to -1) // Off-screen gap; never draw a shortcut.
             result.addAll(simplified.take(remaining).map { it.x.toInt() to it.y.toInt() })
