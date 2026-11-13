@@ -52,6 +52,7 @@ class NavigationEngine(
     @Volatile private var progressCalculator: RouteProgressCalculator? = null
     private var destination: LatLon? = null
     private var locationJob: Job? = null
+    @Volatile private var smoothedScaleMeters = 0.0
     private var downloadJob: Job? = null
     private var activeSettings: AppSettings? = null
     private var gpsFilter: GpsFilter? = null
@@ -132,8 +133,9 @@ class NavigationEngine(
         if (downloadJob?.isActive == true) return
         val currentRoute = route ?: return
         val settings = activeSettings ?: return
+        val maxDownloadScale = maxOf(settings.mapScaleMeters, 500.0)
         downloadJob = scope.launch {
-            offlineMap.prepare(currentRoute, settings.mapScaleMeters) { progress ->
+            offlineMap.prepare(currentRoute, maxDownloadScale) { progress ->
                 withContext(Dispatchers.Main) { TransmissionHub.updateOfflineMap(progress) }
             }
         }
@@ -149,6 +151,7 @@ class NavigationEngine(
         gpsFilter = null
         lastMessage = null
         lastAcceptedMs = 0
+        smoothedScaleMeters = 0.0
         isRerouting = false
         lastRerouteMs = 0L
         route = null
@@ -186,7 +189,7 @@ class NavigationEngine(
         val update = raw.copy(lat = position.lat, lon = position.lon)
         TransmissionHub.updateTripProgress(progress)
 
-        // Automatic Off-Route Recalculation (with 6-second cooldown; avoids re-querying Overpass API)
+        // Automatic Off-Route Recalculation (with 6-second cooldown)
         if (progress.offRoute && !isRerouting && (SystemClock.elapsedRealtime() - lastRerouteMs) > 6000L) {
             val dest = destination
             if (dest != null) {
@@ -226,13 +229,20 @@ class NavigationEngine(
             0
         }
 
-        // Dynamic auto-zoom scale (Double): projects full 240x232 viewport with zero blank margins
-        val effectiveScaleMeters: Double = when {
+        // Smooth speed-adaptive scale with hysteresis (prevents zoom snaps & distortion above 30 km/h)
+        val baseScale = settings.mapScaleMeters
+        val targetScaleMeters: Double = when {
             distanceM in 1..100 -> 180.0
-            speedKmh > 55 -> 650.0
-            speedKmh > 35 -> 450.0
-            else -> settings.mapScaleMeters
+            speedKmh > 60 -> (baseScale * 2.0).coerceAtMost(500.0)
+            speedKmh > 40 -> (baseScale * 1.45).coerceAtMost(380.0)
+            else -> baseScale
         }
+        smoothedScaleMeters = if (smoothedScaleMeters <= 0.0) {
+            targetScaleMeters
+        } else {
+            smoothedScaleMeters + (targetScaleMeters - smoothedScaleMeters) * 0.25
+        }
+        val effectiveScaleMeters = smoothedScaleMeters
 
         val simplified = MapProjector.simplifyRoute(
             currentRoute.coordinates.map { it.lat to it.lon }
