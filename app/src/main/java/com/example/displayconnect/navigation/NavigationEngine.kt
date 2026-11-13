@@ -30,6 +30,9 @@ import android.os.SystemClock
 import android.util.Log
 import com.example.displayconnect.utils.AppLanguage
 import com.example.displayconnect.routing.NavigationText
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -108,8 +111,9 @@ class NavigationEngine(
                 TransmissionHub.navigationFailed(if (AppLanguage.language.value == "en")
                     "No GPS fix. Move to an open area and try again." else "GPS sem posição. Vá para um local aberto e tente novamente.")
                 onNavigationEnded()
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 downloadJob?.cancel()
                 gpsWatchdog?.cancel()
                 TransmissionHub.setNavigating(false)
@@ -216,10 +220,27 @@ class NavigationEngine(
             computeBearingFromRoute(update, simplified)
         }
 
+        // Convert Doppler GPS speed from m/s to km/h
+        val speedKmh = if (raw.speedMps.isFinite() && raw.speedMps >= 0f) {
+            (raw.speedMps * 3.6f).toInt()
+        } else {
+            0
+        }
+
+        // Format clock arrival time (HH:mm)
+        val etaString = if (progress.remainingDurationS > 0) {
+            val etaMillis = System.currentTimeMillis() + (progress.remainingDurationS * 1000L)
+            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(etaMillis))
+        } else {
+            ""
+        }
+
         val message = NavMessage(
             lat = update.lat,
             lon = update.lon,
             bearing = bearing,
+            speedKmh = speedKmh,
+            eta = etaString,
             instruction = NavigationText.instruction(step?.instruction ?: "Continue", AppLanguage.language.value),
             language = AppLanguage.language.value,
             distanceM = distanceM,
