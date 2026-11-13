@@ -227,14 +227,15 @@ class NavigationEngine(
 
         val remSec = progress.remainingDurationS ?: 0
         val etaString = if (remSec > 0) {
-            val etaMillis = System.currentTimeMillis() + (remSec * 1000L)
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(etaMillis))
+        val etaMillis = System.currentTimeMillis() + (remSec * 1000L)
+        SimpleDateFormat("hh:mm a", Locale.US).format(Date(etaMillis))
         } else {
-            ""
+        ""
         }
+
         val nowDate = Date()
-        val currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(nowDate)
-        val currentDate = SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(nowDate)
+        val currentTime = SimpleDateFormat("hh:mm a", Locale.US).format(nowDate)
+        val currentDate = SimpleDateFormat("EEE, dd MMM", Locale.US).format(nowDate)
 
         val message = NavMessage(
             timeStr = currentTime,
