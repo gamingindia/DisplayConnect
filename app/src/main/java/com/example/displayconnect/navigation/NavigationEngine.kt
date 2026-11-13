@@ -48,8 +48,8 @@ class NavigationEngine(
     private val onNavigationEnded: () -> Unit = {}
 ) {
 
-    private var route: RouteData? = null
-    private var progressCalculator: RouteProgressCalculator? = null
+    @Volatile private var route: RouteData? = null
+    @Volatile private var progressCalculator: RouteProgressCalculator? = null
     private var destination: LatLon? = null
     private var locationJob: Job? = null
     private var downloadJob: Job? = null
@@ -59,6 +59,10 @@ class NavigationEngine(
     private var lastAcceptedMs = 0L
     @Volatile private var lastMessage: NavMessage? = null
     private val statsTracker = StatsTracker()
+
+    // Off-route recalculation state
+    @Volatile private var isRerouting = false
+    private var lastRerouteMs = 0L
 
     fun startNavigation(destLat: Double, destLon: Double) {
         stopNavigation()
@@ -145,6 +149,8 @@ class NavigationEngine(
         gpsFilter = null
         lastMessage = null
         lastAcceptedMs = 0
+        isRerouting = false
+        lastRerouteMs = 0L
         route = null
         progressCalculator = null
         destination = null
@@ -179,6 +185,33 @@ class NavigationEngine(
             progress.distanceFromRouteM, raw.accuracyM, raw.speedMps, raw.bearing, progress.routeBearing)
         val update = raw.copy(lat = position.lat, lon = position.lon)
         TransmissionHub.updateTripProgress(progress)
+
+        // Automatic Off-Route Recalculation (with 6-second cooldown)
+        if (progress.offRoute && !isRerouting && (SystemClock.elapsedRealtime() - lastRerouteMs) > 6000L) {
+            val dest = destination
+            if (dest != null) {
+                isRerouting = true
+                lastRerouteMs = SystemClock.elapsedRealtime()
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val newOrigin = LatLon(raw.lat, raw.lon)
+                        val rerouted = routeProvider.fetchRoute(newOrigin, dest, settings.routeProfile).getOrNull()
+                        if (rerouted != null) {
+                            route = rerouted
+                            progressCalculator = RouteProgressCalculator(rerouted)
+                            offlineMap.saveRoute(rerouted, dest, settings.routeProfile)
+                            retryOfflineDownload()
+                            Log.d("DisplayConnectMap", "Off-route recalculation succeeded")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("DisplayConnectMap", "Off-route recalculation failed: ${e.message}")
+                    } finally {
+                        isRerouting = false
+                    }
+                }
+            }
+        }
+
         if (navClient.connectionState.value != com.example.displayconnect.models.ConnectionState.CONNECTED) {
             return@withContext
         }
@@ -187,6 +220,21 @@ class NavigationEngine(
         val distanceM = step?.let {
             haversineMeters(update.lat, update.lon, it.endLocation.lat, it.endLocation.lon).toInt()
         } ?: 0
+
+        val speedKmh = if (raw.speedMps.isFinite() && raw.speedMps >= 0f) {
+            (raw.speedMps * 3.6f).toInt()
+        } else {
+            0
+        }
+
+        // Dynamic auto-zoom scale: projects full 240x232 viewport with zero blank margins
+        val effectiveScaleMeters = when {
+            distanceM in 1..100 -> 180
+            speedKmh > 55 -> 650
+            speedKmh > 35 -> 450
+            else -> settings.mapScaleMeters
+        }
+
         val simplified = MapProjector.simplifyRoute(
             currentRoute.coordinates.map { it.lat to it.lon }
         )
@@ -194,23 +242,23 @@ class NavigationEngine(
             centerLat = update.lat,
             centerLon = update.lon,
             routePoints = currentRoute.coordinates.map { it.lat to it.lon },
-            scaleMeters = settings.mapScaleMeters
+            scaleMeters = effectiveScaleMeters
         )
         val userPoint = MapProjector.projectPoint(
             centerLat = update.lat,
             centerLon = update.lon,
             lat = update.lat,
             lon = update.lon,
-            scaleMeters = settings.mapScaleMeters
+            scaleMeters = effectiveScaleMeters
         )
 
-        val (streets, covered) = offlineMap.visibleWays(LatLon(update.lat, update.lon), settings.mapScaleMeters)
+        val (streets, covered) = offlineMap.visibleWays(LatLon(update.lat, update.lon), effectiveScaleMeters)
         TransmissionHub.updateMapCoverage(covered)
         val streetSegments = withContext(Dispatchers.Default) { StreetContextProjector.projectSegments(
             centerLat = update.lat,
             centerLon = update.lon,
             ways = streets,
-            scaleMeters = settings.mapScaleMeters
+            scaleMeters = effectiveScaleMeters
         ) }
 
         val bearing = if (update.bearing.isFinite()) {
@@ -219,18 +267,12 @@ class NavigationEngine(
             computeBearingFromRoute(update, simplified)
         }
 
-        val speedKmh = if (raw.speedMps.isFinite() && raw.speedMps >= 0f) {
-            (raw.speedMps * 3.6f).toInt()
-        } else {
-            0
-        }
-
         val remSec = progress.remainingDurationS ?: 0
         val etaString = if (remSec > 0) {
-        val etaMillis = System.currentTimeMillis() + (remSec * 1000L)
-        SimpleDateFormat("hh:mm a", Locale.US).format(Date(etaMillis))
+            val etaMillis = System.currentTimeMillis() + (remSec * 1000L)
+            SimpleDateFormat("hh:mm a", Locale.US).format(Date(etaMillis))
         } else {
-        ""
+            ""
         }
 
         val nowDate = Date()
