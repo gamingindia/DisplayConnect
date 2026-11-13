@@ -4,7 +4,11 @@ import com.example.displayconnect.routing.*
 import kotlinx.coroutines.*
 import java.io.File
 
-class OfflineMapRepository(root: File, private val source: StreetSource, private val pauseMs: Long = 1200) {
+class OfflineMapRepository(
+    root: File,
+    private val source: StreetSource,
+    private val pauseMs: Long = 1800
+) {
     private val disk = OfflineDiskStore(root)
 
     suspend fun findRoute(origin: LatLon, destination: LatLon, profile: RouteProfile): RouteData? =
@@ -19,14 +23,15 @@ class OfflineMapRepository(root: File, private val source: StreetSource, private
             onProgress(state)
             try {
                 val tiles = RouteCoverage.plan(route.coordinates, scale)
-                disk.trim(tiles.toSet())
                 val missing = tiles.filter { currentCoroutineContext().ensureActive(); disk.load(it) == null }
                 state = state.copy(total = tiles.size, downloaded = tiles.size - missing.size)
                 onProgress(state)
-                for ((index, batch) in missing.chunked(4).withIndex()) {
+
+                // Larger batches (12 tiles/request) reduce Overpass API calls by 3x and prevent 429 rate-limits
+                for ((index, batch) in missing.chunked(12).withIndex()) {
                     currentCoroutineContext().ensureActive()
                     if (index > 0) delay(pauseMs)
-                    val ways = source.fetch(batch.map { it.bounds() })
+                    val ways = fetchWithRetry(batch.map { it.bounds() })
                     currentCoroutineContext().ensureActive()
                     for (tile in batch) {
                         disk.save(tile, ways.filter { it.bounds.intersects(tile.bounds()) })
@@ -34,14 +39,38 @@ class OfflineMapRepository(root: File, private val source: StreetSource, private
                         onProgress(state)
                     }
                 }
-                state = state.copy(downloading = false)
+                state = state.copy(downloading = false, error = null)
                 onProgress(state)
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) {
-                onProgress(state.copy(downloading = false,
-                    error = e.message ?: "Falha ao baixar as ruas. Confira a internet e tente novamente."))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onProgress(
+                    state.copy(
+                        downloading = false,
+                        error = e.message ?: "Offline map download failed. Check internet and tap retry."
+                    )
+                )
             }
         }
+
+    private suspend fun fetchWithRetry(boundsList: List<LatLonBounds>): List<StreetWay> {
+        var lastError: Exception? = null
+        for (attempt in 1..3) {
+            currentCoroutineContext().ensureActive()
+            try {
+                return source.fetch(boundsList)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt < 3) {
+                    // Exponential backoff (2.5s, then 5.0s) to let Overpass rate-limit window clear
+                    delay(2500L * attempt)
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("Overpass API timeout")
+    }
 
     /** No network here. Only read saved tiles needed to cover this complete viewport. */
     suspend fun visibleWays(center: LatLon, scale: Double): Pair<List<List<LatLon>>, Boolean> =
