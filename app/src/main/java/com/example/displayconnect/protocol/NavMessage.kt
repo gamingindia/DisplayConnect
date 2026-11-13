@@ -18,6 +18,8 @@ data class NavMessage(
     val distanceM: Int,
     val street: String,
     val routeScreenPoints: List<Pair<Int, Int>>,
+    /** Part of the route already driven (ordered from the rider backwards), drawn grey by the display. */
+    val pastScreenPoints: List<Pair<Int, Int>> = emptyList(),
     val streetSegments: List<IntArray> = emptyList(),
     val userScreenPoint: Pair<Int, Int>?,
     val html: String? = null,
@@ -47,6 +49,11 @@ data class NavMessage(
             .put("gps_weak", gpsWeak)
             .put("street", java.text.Normalizer.normalize(street, java.text.Normalizer.Form.NFC).take(47))
             .put("route", route)
+        if (pastScreenPoints.size >= 2) {
+            val past = JSONArray()
+            pastScreenPoints.forEach { (x, y) -> past.put(JSONArray().put(x).put(y)) }
+            json.put("past", past)
+        }
         if (eta.isNotEmpty()) json.put("eta", eta)
         if (timeStr.isNotEmpty()) json.put("time", timeStr)
         if (dateStr.isNotEmpty()) json.put("date", dateStr)
