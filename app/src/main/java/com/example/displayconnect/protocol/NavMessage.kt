@@ -2,13 +2,15 @@ package com.example.displayconnect.protocol
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-/**
- * JSON navigation message sent to the ESP32 (protocol v2).
- */
 data class NavMessage(
     val speedKmh: Int = 0,
     val eta: String = "",
+    val timeStr: String = "",
+    val dateStr: String = "",
     val lat: Double,
     val lon: Double,
     val bearing: Float,
@@ -45,9 +47,10 @@ data class NavMessage(
             .put("gps_weak", gpsWeak)
             .put("street", java.text.Normalizer.normalize(street, java.text.Normalizer.Form.NFC).take(47))
             .put("route", route)
-        if (eta.isNotEmpty()) {
-            json.put("eta", eta)
-        }
+        if (eta.isNotEmpty()) json.put("eta", eta)
+        if (timeStr.isNotEmpty()) json.put("time", timeStr)
+        if (dateStr.isNotEmpty()) json.put("date", dateStr)
+
         if (streetSegments.isNotEmpty()) {
             val streets = JSONArray()
             streetSegments.forEach { seg ->
@@ -69,7 +72,16 @@ data class NavMessage(
     }
 
     companion object {
-        fun heartbeat(): String = """{"type":"heartbeat"}"""
+        fun heartbeat(): String {
+            val now = Date()
+            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+            val date = SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(now)
+            return JSONObject()
+                .put("type", "heartbeat")
+                .put("time", time)
+                .put("date", date)
+                .toString()
+        }
 
         fun loading(): String = """{"type":"loading"}"""
     }
