@@ -74,7 +74,7 @@ data class NavMessage(
     companion object {
         fun heartbeat(): String {
             val now = Date()
-            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+            val time = SimpleDateFormat("hh:mm a", Locale.US).format(now)
             val date = SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(now)
             return JSONObject()
                 .put("type", "heartbeat")
