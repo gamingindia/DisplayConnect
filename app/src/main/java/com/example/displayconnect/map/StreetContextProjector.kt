@@ -33,14 +33,27 @@ object StreetContextProjector {
                 6 * (y / (MapProjector.MAP_HEIGHT / 3.0)).toInt().coerceIn(0, 2)
         }.toSortedMap().values.map { java.util.ArrayDeque(it) }
         val result = mutableListOf<IntArray>()
+        // Vector tiles carry a buffer, so roads near a tile border arrive from both neighbours. Never spend the
+        // 128-segment budget twice on the same pixels.
+        val seen = HashSet<Long>()
+        fun key(a: Int, b: Int, c: Int, d: Int): Long {
+            val p = (a.toLong() shl 48) or (b.toLong() shl 32) or (c.toLong() shl 16) or d.toLong()
+            return p
+        }
         while (groups.any { it.isNotEmpty() }) {
             for (group in groups) {
                 if (group.isEmpty()) continue
                 val runs = group.removeFirst()
-                if (runs.sumOf { it.size - 1 } > budget - result.size) continue
+                val fresh = ArrayList<IntArray>()
                 for (run in runs) for ((a, b) in run.zipWithNext()) {
-                    result.add(intArrayOf(a.x.toInt(), a.y.toInt(), b.x.toInt(), b.y.toInt()))
+                    val s = intArrayOf(a.x.toInt(), a.y.toInt(), b.x.toInt(), b.y.toInt())
+                    if (s[0] == s[2] && s[1] == s[3]) continue
+                    val k1 = key(s[0], s[1], s[2], s[3]); val k2 = key(s[2], s[3], s[0], s[1])
+                    if (k1 in seen || k2 in seen) continue
+                    fresh.add(s)
                 }
+                if (fresh.isEmpty() || fresh.size > budget - result.size) continue
+                for (s in fresh) { seen.add(key(s[0], s[1], s[2], s[3])); result.add(s) }
                 if (result.size == budget) return result
             }
         }
