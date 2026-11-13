@@ -186,7 +186,7 @@ class NavigationEngine(
         val update = raw.copy(lat = position.lat, lon = position.lon)
         TransmissionHub.updateTripProgress(progress)
 
-        // Automatic Off-Route Recalculation (with 6-second cooldown)
+        // Automatic Off-Route Recalculation (with 6-second cooldown; avoids re-querying Overpass API)
         if (progress.offRoute && !isRerouting && (SystemClock.elapsedRealtime() - lastRerouteMs) > 6000L) {
             val dest = destination
             if (dest != null) {
@@ -200,7 +200,6 @@ class NavigationEngine(
                             route = rerouted
                             progressCalculator = RouteProgressCalculator(rerouted)
                             offlineMap.saveRoute(rerouted, dest, settings.routeProfile)
-                            retryOfflineDownload()
                             Log.d("DisplayConnectMap", "Off-route recalculation succeeded")
                         }
                     } catch (e: Exception) {
