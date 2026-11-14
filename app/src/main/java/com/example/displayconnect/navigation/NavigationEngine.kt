@@ -53,7 +53,6 @@ class NavigationEngine(
     private var smoothedBearing: Float = Float.NaN
     private var destination: LatLon? = null
     private var locationJob: Job? = null
-    @Volatile private var smoothedScaleMeters = 0.0
     private var downloadJob: Job? = null
     private var activeSettings: AppSettings? = null
     private var gpsFilter: GpsFilter? = null
@@ -81,7 +80,7 @@ class NavigationEngine(
                     com.example.displayconnect.routing.RouteProfile.BIKE -> 25.0
                     else -> 70.0
                 })
-                val intervalMs = 1000L / settings.navUpdateHz.coerceIn(1, 5)
+                val intervalMs = 1000L / settings.navUpdateHz.coerceIn(1, 10)
                 if (navClient.connectionState.value == com.example.displayconnect.models.ConnectionState.CONNECTED) {
                     navClient.sendNavMessage(NavMessage.loading())
                 }
@@ -134,8 +133,9 @@ class NavigationEngine(
         if (downloadJob?.isActive == true) return
         val currentRoute = route ?: return
         val settings = activeSettings ?: return
+        val fixedScale = settings.mapScaleMeters.coerceIn(100.0, 380.0)
         downloadJob = scope.launch {
-            offlineMap.prepare(currentRoute, settings.mapScaleMeters) { progress ->
+            offlineMap.prepare(currentRoute, fixedScale) { progress ->
                 withContext(Dispatchers.Main) { TransmissionHub.updateOfflineMap(progress) }
             }
         }
@@ -151,6 +151,7 @@ class NavigationEngine(
         gpsFilter = null
         lastMessage = null
         lastAcceptedMs = 0
+        smoothedBearing = Float.NaN
         isRerouting = false
         lastRerouteMs = 0L
         route = null
@@ -188,7 +189,7 @@ class NavigationEngine(
         val update = raw.copy(lat = position.lat, lon = position.lon)
         TransmissionHub.updateTripProgress(progress)
 
-        // Automatic Off-Route Recalculation (with 6-second cooldown; avoids re-querying Overpass API)
+        // Automatic Off-Route Recalculation (with 6-second cooldown)
         if (progress.offRoute && !isRerouting && (SystemClock.elapsedRealtime() - lastRerouteMs) > 6000L) {
             val dest = destination
             if (dest != null) {
@@ -228,19 +229,8 @@ class NavigationEngine(
             0
         }
 
-        // Dynamic auto-zoom scale (Double): projects full 240x232 viewport with zero blank margins
-// Dynamic auto-zoom scale
-val effectiveScaleMeters: Double = when {
-    distanceM in 1..100 -> 180.0
-    speedKmh >= 100 -> 380.0
-    speedKmh >= 80  -> 340.0
-    speedKmh >= 60  -> 300.0
-    speedKmh >= 40  -> 260.0
-    speedKmh >= 20  -> 220.0
-    speedKmh >= 10  -> 190.0
-    speedKmh >= 5   -> 170.0
-    else -> settings.mapScaleMeters.coerceAtMost(150.0)
-}
+        // Fixed scale capped at 380m: eliminates zoom distortion at any speed
+        val effectiveScaleMeters: Double = settings.mapScaleMeters.coerceIn(100.0, 380.0)
 
         val simplified = MapProjector.simplifyRoute(
             currentRoute.coordinates.map { it.lat to it.lon }
@@ -302,11 +292,19 @@ val effectiveScaleMeters: Double = when {
             scaleMeters = effectiveScaleMeters
         ) }
 
-        val bearing = if (update.bearing.isFinite()) {
+        // Smooth circular bearing filter (eliminates 1 Hz GNSS heading snaps)
+        val rawBearing = if (update.bearing.isFinite()) {
             update.bearing
         } else {
             computeBearingFromRoute(update, simplified)
         }
+        smoothedBearing = if (!smoothedBearing.isFinite()) {
+            rawBearing
+        } else {
+            val delta = ((rawBearing - smoothedBearing + 540f) % 360f) - 180f
+            (smoothedBearing + delta * 0.35f + 360f) % 360f
+        }
+        val bearing = smoothedBearing
 
         val remSec = progress.remainingDurationS ?: 0
         val etaString = if (remSec > 0) {
