@@ -212,6 +212,20 @@ class BleNavClient(context: Context) {
         }
     }
 
+    /** Close the half-open connection first, otherwise the next connect can fail until Bluetooth is toggled. */
+    private fun dropGattAndReconnect(gatt: BluetoothGatt) {
+        heartbeatJob?.cancel()
+        rxCharacteristic = null
+        writeAck.getAndSet(null)?.complete(false)
+        try {
+            gatt.disconnect()
+            gatt.close()
+        } catch (_: Exception) {
+        }
+        this.gatt = null
+        scheduleReconnect()
+    }
+
     private fun scheduleReconnect() {
         if (!shouldReconnect.get()) return
         reconnectJob?.cancel()
@@ -303,6 +317,12 @@ class BleNavClient(context: Context) {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 _connectionState.value = ConnectionState.CONNECTING
+                // Ask for the fast connection interval (~7-15 ms instead of ~30-50 ms).
+                try {
+                    gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                } catch (_: SecurityException) {
+                } catch (_: Exception) {
+                }
                 // Request MTU first; discover services in onMtuChanged (or fallback).
                 if (!gatt.requestMtu(REQUESTED_MTU)) {
                     gatt.discoverServices()
@@ -342,7 +362,7 @@ class BleNavClient(context: Context) {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 _connectionState.value = ConnectionState.ERROR
-                scheduleReconnect()
+                dropGattAndReconnect(gatt)
                 return
             }
             val service = gatt.getService(SERVICE_UUID)
@@ -350,7 +370,7 @@ class BleNavClient(context: Context) {
             val tx = service?.getCharacteristic(TX_UUID)
             if (rx == null || tx == null) {
                 _connectionState.value = ConnectionState.ERROR
-                scheduleReconnect()
+                dropGattAndReconnect(gatt)
                 return
             }
             rxCharacteristic = rx
@@ -386,7 +406,7 @@ class BleNavClient(context: Context) {
         private const val MAX_PAYLOAD_BYTES = 8192
         private const val WRITE_TIMEOUT_MS = 2000L
         private const val TAG = "DisplayConnectBLE"
-        private const val HEARTBEAT_INTERVAL_SEC = 15L
+        private const val HEARTBEAT_INTERVAL_SEC = 5L
         private const val RECONNECT_DELAY_MS = 3000L
         private const val SCAN_DURATION_MS = 10_000L
     }
