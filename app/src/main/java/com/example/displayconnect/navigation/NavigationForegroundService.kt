@@ -38,7 +38,8 @@ class NavigationForegroundService : Service() {
             ACTION_STOP -> stopNavigationService()
             ACTION_RETRY_DOWNLOAD -> navigationEngine?.retryOfflineDownload()
         }
-        return START_STICKY
+        // Navigation cannot resume without a destination, so never ask Android to restart us with a null intent.
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -48,16 +49,18 @@ class NavigationForegroundService : Service() {
     }
 
     private fun handleStart(intent: Intent) {
+        // Must call startForeground() within seconds of startForegroundService(), even if we then stop.
+        createNotificationChannel()
+        startForegroundWithNotification(buildNotification())
+
         val destLat = intent.getDoubleExtra(EXTRA_DEST_LAT, Double.NaN)
         val destLon = intent.getDoubleExtra(EXTRA_DEST_LON, Double.NaN)
         if (destLat.isNaN() || destLon.isNaN()) {
-            stopSelf()
+            stopNavigationService()
             return
         }
 
         NavigationWakeLock.acquire(this)
-        createNotificationChannel()
-        startForegroundWithNotification(buildNotification())
 
         val app = application as DisplayConnectApp
         navigationEngine?.stopNavigation()
