@@ -50,6 +50,7 @@ class NavigationEngine(
 
     @Volatile private var route: RouteData? = null
     @Volatile private var progressCalculator: RouteProgressCalculator? = null
+    private var smoothedBearing: Float = Float.NaN
     private var destination: LatLon? = null
     private var locationJob: Job? = null
     @Volatile private var smoothedScaleMeters = 0.0
