@@ -10,11 +10,15 @@ data class TripProgress(
     val distanceFromRouteM: Double? = null,
     val routeBearing: Float? = null,
     /** Index i of the route segment (points[i] -> points[i+1]) the rider is currently on. */
-    val segmentIndex: Int? = null
+    val segmentIndex: Int? = null,
+    /** Index into route.steps of the next manoeuvre still ahead of the rider. */
+    val stepIndex: Int? = null,
+    /** Distance along the route (not straight line) to that manoeuvre, in metres. */
+    val stepDistanceM: Int? = null
 )
 
 /** Projects GPS onto the route; remaining distance follows its bends, not a straight line. */
-class RouteProgressCalculator(private val route: RouteData) {
+class RouteProgressCalculator(val route: RouteData) {
     private val points = route.coordinates
     private val geometry = points.zipWithNext { a, b ->
         val y = Math.toRadians(b.lat - a.lat) * EARTH_RADIUS
@@ -26,6 +30,35 @@ class RouteProgressCalculator(private val route: RouteData) {
     private val distanceSuffix = suffix(distances)
     private val durationSuffix = suffix(durations)
     private var lastSegment: Int? = null
+
+    /** For every step: the route vertex where its manoeuvre happens (monotonic, forward only). */
+    private val stepEndIndex: IntArray = run {
+        val steps = route.steps
+        val result = IntArray(steps.size)
+        var prev = 0
+        val total = distanceSuffix[0]
+        for ((n, step) in steps.withIndex()) {
+            val startCum = total - distanceSuffix[prev]
+            val limit = step.distanceM * 1.5 + 150.0
+            var bestIdx = prev
+            var bestD = Double.POSITIVE_INFINITY
+            var i = prev
+            while (i < points.size) {
+                if ((total - distanceSuffix[i]) - startCum > limit) break
+                val dLat = Math.toRadians(points[i].lat - step.endLocation.lat) * EARTH_RADIUS
+                val dLon = Math.toRadians(points[i].lon - step.endLocation.lon) * EARTH_RADIUS *
+                    cos(Math.toRadians(step.endLocation.lat))
+                val d = hypot(dLat, dLon)
+                if (d < bestD - 0.01) { bestD = d; bestIdx = i }
+                i++
+            }
+            result[n] = bestIdx
+            prev = bestIdx
+        }
+        // Final step is always "arrive": it ends at the last vertex.
+        if (result.isNotEmpty()) result[result.lastIndex] = points.lastIndex
+        result
+    }
 
     fun update(location: LatLon): TripProgress {
         if (points.size < 2 || !location.lat.isFinite() || !location.lon.isFinite()) return TripProgress()
@@ -59,11 +92,22 @@ class RouteProgressCalculator(private val route: RouteData) {
         val a = points[i]; val b = points[i + 1]
         val matched = LatLon(a.lat + (b.lat - a.lat) * found.fraction, a.lon + (b.lon - a.lon) * found.fraction)
         val direction = ((Math.toDegrees(atan2((b.lon - a.lon) * cosLat, b.lat - a.lat)) + 360) % 360).toFloat()
+        // Next manoeuvre = first step whose end is still more than a few metres ahead along the route.
+        var nextStep: Int? = null
+        var nextDist: Int? = null
+        for (n in stepEndIndex.indices) {
+            val d = remainingM - distanceSuffix[stepEndIndex[n]]
+            if (d >= PASSED_M || n == stepEndIndex.lastIndex) {
+                nextStep = n
+                nextDist = d.coerceAtLeast(0.0).toInt()
+                break
+            }
+        }
         return TripProgress(
             ceil(remainingM).toInt().coerceAtLeast(0),
             if (route.durationS > 0) ceil(remainingS).toInt().coerceAtLeast(0) else null,
             matchedPosition = matched, distanceFromRouteM = found.distance, routeBearing = direction,
-            segmentIndex = i
+            segmentIndex = i, stepIndex = nextStep, stepDistanceM = nextDist
         )
     }
 
@@ -82,5 +126,8 @@ class RouteProgressCalculator(private val route: RouteData) {
     }
 
     private data class Match(val index: Int, val fraction: Double, val distance: Double)
-    private companion object { const val EARTH_RADIUS = 6_371_000.0 }
+    private companion object {
+        const val EARTH_RADIUS = 6_371_000.0
+        const val PASSED_M = 6.0
+    }
 }
