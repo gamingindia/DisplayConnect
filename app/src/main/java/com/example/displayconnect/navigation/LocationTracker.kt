@@ -28,10 +28,9 @@ class LocationTracker(context: Context) {
     @SuppressLint("MissingPermission")
     fun locationFlow(intervalMs: Long): Flow<LocationUpdate> = callbackFlow {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis(intervalMs)
-            .setMaxUpdateAgeMillis(0)
-            .setMaxUpdateDelayMillis(0)
-            .setWaitForAccurateLocation(true)
+            .setMinUpdateIntervalMillis(100L) // Allows up to 10 Hz fused IMU + GPS updates
+            .setMinUpdateDistanceMeters(0f)   // Emit heading/speed updates even when crawling in traffic
+            .setWaitForAccurateLocation(false)
             .build()
 
         val callback = object : LocationCallback() {
