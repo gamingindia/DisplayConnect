@@ -104,9 +104,9 @@ class NavigationEngine(
                         }
                     }
                 }
-                if (SystemClock.elapsedRealtime() - originUpdate.elapsedMs < 3000) publishUpdate(originUpdate, settings)
+                if (SystemClock.elapsedRealtime() - originUpdate.elapsedMs < 3000) safePublish(originUpdate, settings)
                 locationTracker.locationFlow(intervalMs).conflate().collect {
-                    if (acceptUpdate(it)) publishUpdate(it, settings) else if (TransmissionHub.gps.value.weak) sendWeakGpsFrame()
+                    if (acceptUpdate(it)) safePublish(it, settings) else if (TransmissionHub.gps.value.weak) sendWeakGpsFrame()
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 downloadJob?.cancel()
@@ -129,8 +129,11 @@ class NavigationEngine(
         }
     }
 
-    fun retryOfflineDownload() {
-        if (downloadJob?.isActive == true) return
+    fun retryOfflineDownload(force: Boolean = false) {
+        if (downloadJob?.isActive == true) {
+            if (!force) return
+            downloadJob?.cancel()
+        }
         val currentRoute = route ?: return
         val settings = activeSettings ?: return
         val fixedScale = settings.mapScaleMeters.coerceIn(100.0, 380.0)
@@ -181,8 +184,10 @@ class NavigationEngine(
 
     private suspend fun publishUpdate(raw: LocationUpdate, settings: AppSettings) = withContext(Dispatchers.Default) {
         val buildStarted = SystemClock.elapsedRealtime()
-        val currentRoute = route ?: return@withContext
-        val progress = progressCalculator?.update(LatLon(raw.lat, raw.lon))
+        // One snapshot per tick so a reroute in the middle cannot mix old steps with new progress.
+        val calculator = progressCalculator
+        val currentRoute = calculator?.route ?: route ?: return@withContext
+        val progress = calculator?.update(LatLon(raw.lat, raw.lon))
             ?: com.example.displayconnect.routing.TripProgress()
         val position = GpsFilter.displayPosition(LatLon(raw.lat, raw.lon), progress.matchedPosition,
             progress.distanceFromRouteM, raw.accuracyM, raw.speedMps, raw.bearing, progress.routeBearing)
@@ -203,6 +208,7 @@ class NavigationEngine(
                             route = rerouted
                             progressCalculator = RouteProgressCalculator(rerouted)
                             offlineMap.saveRoute(rerouted, dest, settings.routeProfile)
+                            retryOfflineDownload(force = true)
                             Log.d("DisplayConnectMap", "Off-route recalculation succeeded")
                         }
                     } catch (e: Exception) {
@@ -218,8 +224,10 @@ class NavigationEngine(
             return@withContext
         }
 
-        val step = findCurrentStep(update, currentRoute.steps)
-        val distanceM = step?.let {
+        // Next manoeuvre by position ALONG the route (never a turn you have already passed).
+        val progressStep = progress.stepIndex?.let { currentRoute.steps.getOrNull(it) }
+        val step = progressStep ?: findCurrentStep(update, currentRoute.steps)
+        val distanceM = progress.stepDistanceM?.takeIf { progressStep != null } ?: step?.let {
             haversineMeters(update.lat, update.lon, it.endLocation.lat, it.endLocation.lon).toInt()
         } ?: 0
 
@@ -231,10 +239,6 @@ class NavigationEngine(
 
         // Fixed scale capped at 380m: eliminates zoom distortion at any speed
         val effectiveScaleMeters: Double = settings.mapScaleMeters.coerceIn(100.0, 380.0)
-
-        val simplified = MapProjector.simplifyRoute(
-            currentRoute.coordinates.map { it.lat to it.lon }
-        )
 
         // Split the route at the rider: "ahead" is drawn blue, "past" grey (like Google Maps).
         val coords = currentRoute.coordinates
@@ -296,7 +300,9 @@ class NavigationEngine(
         val rawBearing = if (update.bearing.isFinite()) {
             update.bearing
         } else {
-            computeBearingFromRoute(update, simplified)
+            progress.routeBearing ?: computeBearingFromRoute(
+                update, MapProjector.simplifyRoute(currentRoute.coordinates.map { it.lat to it.lon })
+            )
         }
         smoothedBearing = if (!smoothedBearing.isFinite()) {
             rawBearing
@@ -353,6 +359,17 @@ class NavigationEngine(
             TransmissionHub.updateStats(
                 statsTracker.currentStats(settings.resolutionLabel)
             )
+        }
+    }
+
+    /** A single bad tick (GPS glitch, tile error, JSON build) must never end navigation. */
+    private suspend fun safePublish(raw: LocationUpdate, settings: AppSettings) {
+        try {
+            publishUpdate(raw, settings)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("DisplayConnectMap", "Tick failed, continuing: ${e.javaClass.simpleName} ${e.message}")
         }
     }
 
